@@ -60,17 +60,17 @@ jobs:
           
           # 创建 Dockerfile
           cat > openclaw-image/Dockerfile << 'EOF'
-FROM ubuntu:22.04
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    bash \
-    && rm -rf /var/lib/apt/lists/*
-COPY . /usr/local/bin/
-RUN chmod +x /usr/local/bin/openclaw 2>/dev/null || true
-ENTRYPOINT ["/usr/local/bin/openclaw"]
-CMD ["--help"]
-EOF
+            FROM ubuntu:22.04
+            RUN apt-get update && apt-get install -y --no-install-recommends \
+                ca-certificates \
+                curl \
+                bash \
+                && rm -rf /var/lib/apt/lists/*
+            COPY . /usr/local/bin/
+            RUN chmod +x /usr/local/bin/openclaw 2>/dev/null || true
+            ENTRYPOINT ["/usr/local/bin/openclaw"]
+            CMD ["--help"]
+            EOF
       
       - name: Build Docker image
         run: |
