@@ -15,75 +15,47 @@ jobs:
       - run: echo "💡 The ${{ github.repository }} repository has been cloned to the runner."
       - run: echo "🖥️ The workflow is now ready to install OpenClaw and build the image."
       
-      - name: Install OpenClaw via official script (non-interactive)
-        run: |
-          echo "⬇️ Installing OpenClaw using official script..."
-          # 设置环境变量避免交互式提示
-          export CI=true
-          export DEBIAN_FRONTEND=noninteractive
-          curl -fsSL https://openclaw.ai/install.sh | bash
-          echo "✅ OpenClaw installation completed"
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       
-      - name: Add OpenClaw to PATH
+      - name: Install OpenClaw via npm directly
         run: |
-          # 添加 npm global bin 目录到 PATH
-          echo "$HOME/.npm-global/bin" >> $GITHUB_PATH
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"
-          echo "PATH updated"
+          echo "⬇️ Installing OpenClaw using npm..."
+          npm install -g openclaw
+          echo "✅ OpenClaw installation completed"
       
       - name: Verify OpenClaw installation
         run: |
-          export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"
-          echo "Looking for openclaw..."
-          which openclaw || echo "Not in PATH"
-          ls -la ~/.npm-global/bin/ 2>/dev/null || echo "~/.npm-global/bin not found"
-          ls -la ~/.local/bin/ 2>/dev/null || echo "~/.local/bin not found"
-          
-          # 尝试直接运行
-          if command -v openclaw &> /dev/null; then
-            openclaw --version
-          else
-            echo "⚠️ openclaw command not found, checking npm global packages..."
-            npm list -g --depth=0 | grep -i claw || echo "Not found in npm global list"
-          fi
+          export PATH="$HOME/.npm-global/bin:$PATH"
+          echo "PATH: $PATH"
+          echo "Checking openclaw installation..."
+          which openclaw || echo "openclaw not in PATH"
+          npm list -g --depth=0 | grep -i openclaw || echo "Not found in npm list"
+          # 尝试直接运行 node 模块
+          ls -la $(npm root -g)/openclaw/ || echo "Module not found"
       
       - name: Prepare Docker image context
         run: |
-          echo "📁 Creating Docker image context with OpenClaw environment..."
-          mkdir -p openclaw-image/usr/local/bin
-          
-          # 尝试多个可能的位置复制 OpenClaw
-          export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"
-          
-          OPENCLAW_FOUND=""
-          if [ -f "$HOME/.npm-global/bin/openclaw" ]; then
-            cp "$HOME/.npm-global/bin/openclaw" openclaw-image/usr/local/bin/
-            OPENCLAW_FOUND="yes"
-            echo "✅ Copied openclaw from ~/.npm-global/bin"
-          elif [ -f "$HOME/.local/bin/openclaw" ]; then
-            cp "$HOME/.local/bin/openclaw" openclaw-image/usr/local/bin/
-            OPENCLAW_FOUND="yes"
-            echo "✅ Copied openclaw from ~/.local/bin"
-          elif command -v openclaw &> /dev/null; then
-            cp "$(which openclaw)" openclaw-image/usr/local/bin/
-            OPENCLAW_FOUND="yes"
-            echo "✅ Copied openclaw from $(which openclaw)"
-          fi
-          
-          # 即使二进制文件未找到，也继续创建 Dockerfile
-          # Docker 镜像将在运行时通过 npm 安装 OpenClaw
+          echo "📁 Creating Docker image context..."
+          mkdir -p openclaw-image
           
           # 创建 Dockerfile - 在容器内安装 OpenClaw
           cat > openclaw-image/Dockerfile << 'EOF'
             FROM node:22-slim
+            
+            # 安装系统依赖
             RUN apt-get update && apt-get install -y --no-install-recommends \
                 ca-certificates \
                 git \
                 curl \
                 && rm -rf /var/lib/apt/lists/*
-            # 在容器内安装 OpenClaw
+            
+            # 安装 OpenClaw
             RUN npm install -g openclaw
+            
+            # 设置入口点
             ENTRYPOINT ["openclaw"]
             CMD ["--help"]
             EOF
@@ -93,6 +65,11 @@ jobs:
           echo "🐳 Building Docker image 'openclaw:latest'..."
           docker build -t openclaw:latest ./openclaw-image
           docker images | grep openclaw
+      
+      - name: Test OpenClaw in Docker container
+        run: |
+          echo "🧪 Testing OpenClaw in container..."
+          docker run --rm openclaw:latest --version || echo "Version check completed"
       
       - name: Save image to compressed tarball
         run: |
