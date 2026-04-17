@@ -15,27 +15,37 @@ jobs:
       - run: echo "💡 The ${{ github.repository }} repository has been cloned to the runner."
       - run: echo "🖥️ The workflow is now ready to install OpenClaw and build the image."
       
-      - name: Install OpenClaw via official script
+      - name: Install OpenClaw via official script (non-interactive)
         run: |
           echo "⬇️ Installing OpenClaw using official script..."
+          # 设置环境变量避免交互式提示
+          export CI=true
+          export DEBIAN_FRONTEND=noninteractive
           curl -fsSL https://openclaw.ai/install.sh | bash
           echo "✅ OpenClaw installation completed"
       
       - name: Add OpenClaw to PATH
         run: |
-          # 官方脚本通常安装到 ~/.local/bin
+          # 添加 npm global bin 目录到 PATH
+          echo "$HOME/.npm-global/bin" >> $GITHUB_PATH
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-          export PATH="$HOME/.local/bin:$PATH"
+          export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"
+          echo "PATH updated"
       
       - name: Verify OpenClaw installation
         run: |
-          # 尝试找到 openclaw 命令
+          export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"
+          echo "Looking for openclaw..."
+          which openclaw || echo "Not in PATH"
+          ls -la ~/.npm-global/bin/ 2>/dev/null || echo "~/.npm-global/bin not found"
+          ls -la ~/.local/bin/ 2>/dev/null || echo "~/.local/bin not found"
+          
+          # 尝试直接运行
           if command -v openclaw &> /dev/null; then
-            openclaw --version || echo "OpenClaw is installed"
+            openclaw --version
           else
-            echo "Looking for openclaw in common locations..."
-            ls -la ~/.local/bin/ 2>/dev/null | grep -i claw || echo "Not found in ~/.local/bin"
-            ls -la /usr/local/bin/ 2>/dev/null | grep -i claw || echo "Not found in /usr/local/bin"
+            echo "⚠️ openclaw command not found, checking npm global packages..."
+            npm list -g --depth=0 | grep -i claw || echo "Not found in npm global list"
           fi
       
       - name: Prepare Docker image context
@@ -44,31 +54,37 @@ jobs:
           mkdir -p openclaw-image/usr/local/bin
           
           # 尝试多个可能的位置复制 OpenClaw
-          if [ -f "$HOME/.local/bin/openclaw" ]; then
+          export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"
+          
+          OPENCLAW_FOUND=""
+          if [ -f "$HOME/.npm-global/bin/openclaw" ]; then
+            cp "$HOME/.npm-global/bin/openclaw" openclaw-image/usr/local/bin/
+            OPENCLAW_FOUND="yes"
+            echo "✅ Copied openclaw from ~/.npm-global/bin"
+          elif [ -f "$HOME/.local/bin/openclaw" ]; then
             cp "$HOME/.local/bin/openclaw" openclaw-image/usr/local/bin/
-          elif [ -f "/usr/local/bin/openclaw" ]; then
-            cp "/usr/local/bin/openclaw" openclaw-image/usr/local/bin/
+            OPENCLAW_FOUND="yes"
+            echo "✅ Copied openclaw from ~/.local/bin"
           elif command -v openclaw &> /dev/null; then
             cp "$(which openclaw)" openclaw-image/usr/local/bin/
-          else
-            echo "⚠️ OpenClaw binary not found, creating placeholder"
-            # 创建一个占位符脚本
-            echo '#!/bin/bash' > openclaw-image/usr/local/bin/openclaw
-            echo 'echo "OpenClaw placeholder - actual installation failed"' >> openclaw-image/usr/local/bin/openclaw
-            chmod +x openclaw-image/usr/local/bin/openclaw
+            OPENCLAW_FOUND="yes"
+            echo "✅ Copied openclaw from $(which openclaw)"
           fi
           
-          # 创建 Dockerfile
+          # 即使二进制文件未找到，也继续创建 Dockerfile
+          # Docker 镜像将在运行时通过 npm 安装 OpenClaw
+          
+          # 创建 Dockerfile - 在容器内安装 OpenClaw
           cat > openclaw-image/Dockerfile << 'EOF'
-            FROM ubuntu:22.04
+            FROM node:22-slim
             RUN apt-get update && apt-get install -y --no-install-recommends \
                 ca-certificates \
+                git \
                 curl \
-                bash \
                 && rm -rf /var/lib/apt/lists/*
-            COPY . /usr/local/bin/
-            RUN chmod +x /usr/local/bin/openclaw 2>/dev/null || true
-            ENTRYPOINT ["/usr/local/bin/openclaw"]
+            # 在容器内安装 OpenClaw
+            RUN npm install -g openclaw
+            ENTRYPOINT ["openclaw"]
             CMD ["--help"]
             EOF
       
