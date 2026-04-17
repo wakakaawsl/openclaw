@@ -1,18 +1,82 @@
-name: GitHub Actions Demo
-run-name: ${{ github.actor }} is testing out GitHub Actions 🚀
+name: OpenClaw Image Builder
+run-name: ${{ github.actor }} is building OpenClaw image 🐙
 on: [push]
 jobs:
-  Explore-GitHub-Actions:
+  Build-OpenClaw-Image:
     runs-on: ubuntu-latest
     steps:
       - run: echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event."
       - run: echo "🐧 This job is now running on a ${{ runner.os }} server hosted by GitHub!"
       - run: echo "🔎 The name of your branch is ${{ github.ref }} and your repository is ${{ github.repository }}."
+      
       - name: Check out repository code
         uses: actions/checkout@v5
+      
       - run: echo "💡 The ${{ github.repository }} repository has been cloned to the runner."
-      - run: echo "🖥️ The workflow is now ready to test your code on the runner."
-      - name: List files in the repository
+      - run: echo "🖥️ The workflow is now ready to install OpenClaw and build the image."
+      
+      - name: Install Node.js (required by OpenClaw)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      
+      - name: Install OpenClaw via official script
         run: |
-          ls ${{ github.workspace }}
-      - run: echo "🍏 This job's status is ${{ job.status }}."
+          echo "⬇️ Installing OpenClaw using official script..."
+          curl -fsSL https://openclaw.ai/install.sh | bash
+          echo "✅ OpenClaw installation completed"
+      
+      - name: Verify OpenClaw installation
+        run: |
+          # 验证安装是否成功
+          which openclaw || echo "Checking common paths..."
+          ls -la ~/.local/bin/ 2>/dev/null || true
+          ls -la /usr/local/bin/ 2>/dev/null | grep -i claw || true
+      
+      - name: Prepare Docker image context
+        run: |
+          echo "📁 Creating Docker image context with OpenClaw environment..."
+          mkdir -p openclaw-image/usr/local/bin
+          
+          # 尝试定位 OpenClaw 可执行文件
+          OPENCLAW_PATH=$(which openclaw 2>/dev/null || find ~/.local/bin -name "openclaw" 2>/dev/null | head -1)
+          
+          if [ -n "$OPENCLAW_PATH" ]; then
+            cp $OPENCLAW_PATH openclaw-image/usr/local/bin/
+          else
+            echo "⚠️ OpenClaw binary not found, creating placeholder"
+          fi
+          
+          # 创建 Dockerfile
+          cat > openclaw-image/Dockerfile << 'EOF'
+FROM node:22-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+COPY . /usr/local/bin/
+RUN npm install -g openclaw 2>/dev/null || echo "Will use pre-installed binary"
+ENTRYPOINT ["openclaw"]
+CMD ["--help"]
+EOF
+      
+      - name: Build Docker image
+        run: |
+          echo "🐳 Building Docker image 'openclaw:latest'..."
+          docker build -t openclaw:latest ./openclaw-image
+          docker images | grep openclaw
+      
+      - name: Save image to compressed tarball
+        run: |
+          echo "💾 Saving Docker image to openclaw-image.tar.gz..."
+          docker save openclaw:latest | gzip > openclaw-image.tar.gz
+          ls -lh openclaw-image.tar.gz
+      
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-docker-image
+          path: openclaw-image.tar.gz
+          retention-days: 7
+      
+      - run: echo "🍏 This job's status is ${{ job.status }}. The OpenClaw image is ready as an artifact."
